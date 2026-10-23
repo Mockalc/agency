@@ -25,12 +25,22 @@ on:
       # job below never fires, and a new rule ships untested: the color check
       # went in this way and nothing in CI had ever looked at a color value.
       - "scripts/lint-agents.sh"
+      - "scripts/check-agent-originality.sh"
       - "scripts/convert.sh"
       - "scripts/lib.sh"
+      - "scripts/run-tests.sh"
+  # The pull-request jobs only ever see part of the roster. Linting main as a
+  # whole on every push and once a week catches an agent merged around the
+  # linter, or a rule tightened after agents were written against the old one.
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 6 * * 1" # Mondays 06:23 UTC
 
 jobs:
   lint:
     name: Validate agent frontmatter and structure
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -73,21 +83,29 @@ jobs:
           ./scripts/check-agent-originality.sh $CHANGED_FILES
 
   lint-all:
-    name: Whole roster, when the linter changes
+    name: Whole roster (linter changes, main, weekly)
     runs-on: ubuntu-latest
     # The job above lints the agents a PR touched, which is the right scope for
     # an agent PR and the wrong one for a rule change: a new rule has to run
     # against every agent before it lands, or it either breaks a division nobody
-    # edited or quietly does nothing.
+    # edited or quietly does nothing. Pushes to main and the weekly run always
+    # cover the whole roster.
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Did the linter or the color map change?
+      - name: Lint the whole roster?
         id: rules
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
-          RULES="scripts/lint-agents.sh scripts/convert.sh scripts/lib.sh"
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "$EVENT run - linting the whole roster."
+            exit 0
+          fi
+          RULES="scripts/lint-agents.sh scripts/check-agent-originality.sh scripts/convert.sh scripts/lib.sh scripts/run-tests.sh"
           CHANGED=$(git diff --name-only --diff-filter=ACMR \
             "origin/${{ github.base_ref }}...HEAD" -- $RULES)
           if [ -n "$CHANGED" ]; then
@@ -99,16 +117,7 @@ jobs:
             echo "Linter unchanged - the changed-files job is the right scope here."
           fi
 
-      - name: Lint every agent in the roster
+      - name: Lint and check originality across the whole roster
         if: steps.rules.outputs.changed == 'true'
-        run: |
-          chmod +x scripts/lint-agents.sh
-          ./scripts/lint-agents.sh
-
-      - name: Reject folded frontmatter fixtures
-        if: steps.rules.outputs.changed == 'true'
-        run: bash scripts/test-folded-frontmatter.sh
-
-      - name: Reject Qwen launch placeholders
-        if: steps.rules.outputs.changed == 'true'
-        run: bash scripts/test-lint-qwen-placeholders.sh
+        # scripts/run-tests.sh holds the test list (run it with --list to see it).
+        run: bash scripts/run-tests.sh roster

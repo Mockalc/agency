@@ -20,14 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Shell syntax
-        run: |
-          for f in scripts/*.sh; do bash -n "$f"; done
-
-      - name: Run installer tests
-        run: |
-          chmod +x scripts/test-install.sh scripts/install.sh
-          ./scripts/test-install.sh
-          bash scripts/test-install-openclaw-registration.sh
-          bash scripts/test-install-link-ownership.sh
-          bash scripts/test-install-parallel-logs.sh
+      - name: Run the install suite
+        # scripts/run-tests.sh holds the test list (run it with --list to see it),
+        # including `bash -n` on every script.
+        run: bash scripts/run-tests.sh install

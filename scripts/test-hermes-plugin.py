@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import types
 import unittest
@@ -13,7 +14,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "integrations" / "hermes" / "agency-agents-router" / "__init__.py"
+# AGENCY_HERMES_PLUGIN tests a plugin built elsewhere (run-tests.sh builds one
+# into a temp dir); the default is where `convert.sh --tool hermes` writes it.
+PLUGIN = Path(
+    os.environ.get("AGENCY_HERMES_PLUGIN")
+    or ROOT / "integrations" / "hermes" / "agency-agents-router" / "__init__.py"
+)
 
 
 class State(str, Enum):
@@ -167,4 +173,6 @@ class DelegateBehaviorTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    if not PLUGIN.is_file():
+        sys.exit(f"{PLUGIN} not found. Build it first: ./scripts/convert.sh --tool hermes")
     unittest.main()

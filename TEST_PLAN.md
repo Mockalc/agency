@@ -38,42 +38,39 @@ Baseline run on 2026-10-23 at `4e3ac3c`, on Linux with bash 5.2 and Python 3.13
 | Installer regressions | `test-agent-selection`, `test-cli-usage`, `test-install-{hermes-destination,conversion-failure,all-path-collision,selection-completeness,continue-after-failure}` | `check-tools.yml` (Linux only) | pass | ~30s |
 | | `test-install-{openclaw-registration,link-ownership,parallel-logs}` | `test-install.yml` (Linux + macOS) | pass | ~2s |
 
-`check-tools.yml`, `check-divisions.yml`, `check-runbooks.yml`,
-`check-hermes-config-rewrite.yml` and `test-install.yml` run on every PR and
-on every push to `main`. `lint-agents.yml` runs on PRs only, and only when an
-agent file or the linter changed.
+The "Run by CI in" column shows CI at the baseline commit. Phase 1 (below)
+moved every test behind `scripts/run-tests.sh`; run it with `--list` to see
+which suite each test is in now.
 
 ### Running it locally
 
-Prerequisites: bash 3.2 or newer, Python 3 with PyYAML, git, and the standard
-coreutils (`awk`, `find`, `mktemp`, `sha256sum`/`shasum`). The tests isolate
-`HOME` and write only to `mktemp` directories, so it is safe to run them on a
-machine where the tools are really installed.
+Prerequisites: bash 3.2 or newer, Python 3.11+ with PyYAML, git, and the
+standard coreutils (`awk`, `find`, `mktemp`, `sha256sum`/`shasum`). The tests
+isolate `HOME` and write only to `mktemp` directories, so it is safe to run them
+on a machine where the tools are really installed.
 
 ```bash
-# Fast tier (under a minute): contracts, syntax, small regression cases
-for f in scripts/*.sh; do bash -n "$f"; done
-./scripts/check-divisions.sh && ./scripts/check-runbooks.sh && ./scripts/check-tools.sh
-./scripts/check-hermes-config-rewrite.sh && python3 scripts/check-hermes-plugin.py
-./scripts/lint-agents.sh path/to/changed-agent.md
-
-# Full tier (about 8 minutes): everything CI runs
-bash scripts/test-convert-outputs.sh --drift=advisory
-./scripts/test-install.sh
-for t in scripts/test-*.sh; do bash "$t" || echo "FAILED: $t"; done
+./scripts/run-tests.sh --fast          # under a minute: everything except the slow tests
+./scripts/run-tests.sh                 # about 8 minutes: every suite CI runs
+./scripts/run-tests.sh checks install  # only some suites: checks, outputs, install, roster
+./scripts/run-tests.sh --list          # what each suite contains
+./scripts/lint-agents.sh path/to/agent.md   # one agent
 ```
 
 ### Which checks to run for which change
+
+When in doubt, run `./scripts/run-tests.sh`. For a narrower run:
 
 | Change | Run at least |
 |--------|--------------|
 | Agent added or edited | `lint-agents.sh <file>`, `check-agent-originality.sh <file>`, `test-convert-outputs.sh --drift=advisory` |
 | Agent renamed or removed | The row above, plus `check-runbooks.sh`, and update the README roster and `scripts/i18n/agent-names-zh.json` (nothing checks those two yet; see G6 and G8) |
-| `convert.sh` / `lib.sh` | Every `test-convert-*.sh`, `lint-agents.sh` (whole roster), `test-folded-frontmatter.sh`, `test-lint-qwen-placeholders.sh`, then `test-convert-outputs.sh --update` |
-| `install.sh` | `bash -n`, every `test-install*.sh`, `test-agent-selection.sh`, `test-cli-usage.sh`, `check-hermes-config-rewrite.sh` |
-| `build-hermes-plugin.py` | `check-hermes-plugin.py`, then `convert.sh --tool hermes && python3 scripts/test-hermes-plugin.py` |
+| `convert.sh` / `lib.sh` | `run-tests.sh checks roster`, then `test-convert-outputs.sh --update` |
+| `install.sh` | `run-tests.sh install`, plus `check-hermes-config-rewrite.sh` |
+| `build-hermes-plugin.py` | `run-tests.sh checks` |
 | New tool (`tools.json`) | `check-tools.sh`, `test-convert-outputs.sh --update`, plus a new install-destination case (see Phase 2) |
-| New division (`divisions.json`) | `check-divisions.sh`, `test-install.sh` |
+| New division (`divisions.json`) | `check-divisions.sh`, `run-tests.sh install` |
+| New test script | Register it in `TESTS` in `scripts/run-tests.sh`; the runner fails until you do |
 
 ## 3. Gaps found
 
@@ -98,20 +95,46 @@ PRs. Phases 4–5 cost more and can be scheduled as needed.
 
 ### Phase 1: Run the tests that already exist (G1, G4, G5)
 
-1. Add two steps to `check-tools.yml`:
-   `bash scripts/convert.sh --tool hermes` then `python3 scripts/test-hermes-plugin.py`.
-2. Give the `check-tools` job an `os: [ubuntu-latest, macos-latest]` matrix, as
-   `test-install.yml` already has, so the converter runs on bash 3.2.
-3. Add `push: branches: [main]` and a weekly `schedule` to `lint-agents.yml`.
-   On those events, lint the whole roster and run originality over every agent
-   rather than only the changed files.
-4. Add one runner, `scripts/run-tests.sh [--fast|--full]`, and have the
-   workflows call it, so the local command and CI cannot drift apart. Today the
-   CI list lives only in YAML, and `test-hermes-plugin.py` already slipped
-   through that gap.
+**Status: implemented, not yet run in GitHub Actions.** Every suite passes
+locally on Linux. The macOS jobs will first run when a pull request triggers
+these workflows.
+
+1. **One runner.** `scripts/run-tests.sh` holds the test list in four suites:
+   `checks`, `outputs`, `install` and `roster`. It runs every selected test even
+   after a failure, then names all the failures. It also fails if a
+   `scripts/test-*` or `scripts/check-*` file is not registered, or if a
+   registered file no longer exists. That is how `test-hermes-plugin.py` went
+   unrun, and the check makes it impossible to repeat.
+2. **Hermes runtime tests (G1).** The `checks` suite builds the plugin into a temp
+   directory and runs `test-hermes-plugin.py` against it, using the new
+   `AGENCY_HERMES_PLUGIN` variable.
+3. **macOS for the converter (G4).** `check-tools.yml` runs
+   `run-tests.sh checks outputs` on `ubuntu-latest` and `macos-latest`. It pins
+   Python 3.12 and PyYAML so both runners parse the same way.
+4. **Installer suite.** `test-install.yml` runs `run-tests.sh install`. That suite
+   now includes the installer regressions that used to run only on Linux under
+   `check-tools.yml`.
+5. **Whole-roster lint on `main` (G5).** In `lint-agents.yml`, every push to
+   `main` and a weekly run (Mondays 06:23 UTC) lint and originality-check all
+   282 agents. Pull requests behave as before, except that a change to
+   `check-agent-originality.sh` or `run-tests.sh` also triggers the whole-roster
+   job. The folded-frontmatter and Qwen-placeholder fixtures now run on every
+   PR (`checks` suite) instead of only when the linter changes.
+
+Two check names changed, so update branch protection if it requires the old
+ones:
+
+| Old | New |
+|-----|-----|
+| tools.json is the single source of truth | checks and converted outputs (ubuntu-latest), and the same with (macos-latest) |
+| Whole roster, when the linter changes | Whole roster (linter changes, main, weekly) |
+
+`check-divisions.yml`, `check-runbooks.yml` and
+`check-hermes-config-rewrite.yml` are unchanged. Their scripts also run in the
+`checks` suite, which costs a few seconds of duplicated work.
 
 **Done when:** every `scripts/test-*` and `scripts/check-*` file is run by CI or
-listed in the runner as manual-only, with a reason.
+listed in the runner's `HELPERS` with a reason. The runner now enforces this.
 
 ### Phase 2: Cover every tool's install (G2, G3, G11)
 
