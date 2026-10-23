@@ -34,7 +34,7 @@ Baseline run on 2026-10-23 at `4e3ac3c`, on Linux with bash 5.2 and Python 3.13
 | Generated-output eval | `test-convert-outputs.sh` | `check-tools.yml` (Linux only) | 32/32 invariants over 282 agents × 15 tools; manifest matches with drift enforced | 180s |
 | Hermes contract | `check-hermes-plugin.py`, `check-hermes-config-rewrite.sh` | `check-tools.yml`, `check-hermes-config-rewrite.yml` | pass | ~1s |
 | Hermes runtime | `test-hermes-plugin.py` | **not run in CI** | 6/6 pass after `convert.sh --tool hermes`; all 6 error without that step | 1s |
-| Installer | `test-install.sh` | `test-install.yml` (Linux + macOS) | 66 pass, **2 xfail** (see G12) | 166s |
+| Installer | `test-install.sh` | `test-install.yml` (Linux + macOS) | 66 pass, **2 xfail** (see G11) | 166s |
 | Installer regressions | `test-agent-selection`, `test-cli-usage`, `test-install-{hermes-destination,conversion-failure,all-path-collision,selection-completeness,continue-after-failure}` | `check-tools.yml` (Linux only) | pass | ~30s |
 | | `test-install-{openclaw-registration,link-ownership,parallel-logs}` | `test-install.yml` (Linux + macOS) | pass | ~2s |
 
@@ -84,18 +84,17 @@ for t in scripts/test-*.sh; do bash "$t" || echo "FAILED: $t"; done
 | G3 | The OpenCode limit of 119 agents is never tested | Nothing exercises `tool_cap` or `capacity_warn` | The warning the README promises could silently disappear |
 | G4 | The converter is tested only on Linux | `check-tools.yml` runs on `ubuntu-latest` only; only the `test-install*` family also runs on macOS | The bash 3.2 support claimed in the script headers is unverified for `convert.sh` and the outputs eval |
 | G5 | The whole roster is linted only when the linter itself changes | `lint-agents.yml` has no `push` trigger and lints only changed files | An agent merged around the linter, or a rule tightened later, leaves `main` failing without anyone seeing it |
-| G6 | The zh-CN name map has drifted, and its script never runs | 8 keys in `agent-names-zh.json` match no current agent (the `Academic *` names, `SRE`, `Security Engineer`, `Healthcare Marketing Compliance`). 138 of 282 agents have no entry. `localize-agents-zh.ps1` is never executed | Renamed agents silently lose their translation. A regression in the PowerShell script ships unnoticed |
+| G6 | The zh-CN name map has drifted | 8 keys in `agent-names-zh.json` match no current agent (the `Academic *` names, `SRE`, `Security Engineer`, `Healthcare Marketing Compliance`). 138 of 282 agents have no entry | Renamed agents silently lose their translation |
 | G7 | No static analysis of the shell scripts | No `shellcheck` step anywhere | Quoting and word-splitting bugs, which caused several past install bugs, are found only when a test happens to hit them |
 | G8 | Docs are not checked | No link checker. The README roster is complete today but nothing enforces that. The acknowledgments still say "230+ agents" while the roster has 282 | Dead links and stale claims accumulate |
 | G9 | The interactive installer is untested | Every test passes `--no-interactive`, so the TUI (`selector`, `screen_*`, `interactive_wizard`) is never run | The default path a first-time user takes has no coverage |
 | G10 | No end-to-end check that real tools load what was installed | All tests stop at "the file landed here" | A format the tool rejects, such as a frontmatter key or a size limit, is caught only by users |
-| G11 | Windows is never tested | The manifest promises identical hashes on Windows, and `scripts/i18n` targets Windows, but CI has no Windows job | The cross-platform hash claim is untested |
-| G12 | A known installer bug is parked as xfail | `test-install.sh` has two xfail cases for `--parallel` with a `--path` that contains a space or glob characters: it exits 123 and installs 0 agents. The test says msitarzewski/agency-agents#755 fixes it, but that fix is not in this tree | Anyone with a spaced install path who uses `--parallel` gets a failed install, and CI stays green |
+| G11 | A known installer bug is parked as xfail | `test-install.sh` has two xfail cases for `--parallel` with a `--path` that contains a space or glob characters: it exits 123 and installs 0 agents. The test says msitarzewski/agency-agents#755 fixes it, but that fix is not in this tree | Anyone with a spaced install path who uses `--parallel` gets a failed install, and CI stays green |
 
 ## 4. Plan
 
 The phases are ordered by value per effort. Phases 1–3 are small, self-contained
-PRs. Phases 4–6 cost more and can be scheduled as needed.
+PRs. Phases 4–5 cost more and can be scheduled as needed.
 
 ### Phase 1: Run the tests that already exist (G1, G4, G5)
 
@@ -114,7 +113,7 @@ PRs. Phases 4–6 cost more and can be scheduled as needed.
 **Done when:** every `scripts/test-*` and `scripts/check-*` file is run by CI or
 listed in the runner as manual-only, with a reason.
 
-### Phase 2: Cover every tool's install (G2, G3, G12)
+### Phase 2: Cover every tool's install (G2, G3, G11)
 
 1. Land or port the `--parallel` spaced-path fix (msitarzewski/agency-agents#755).
    Then change the two `xfail_eq` cases in `test-install.sh` to `assert_eq`
@@ -167,17 +166,7 @@ Drive `install.sh` (with no flags) under a pseudo-terminal, using Python's
 - With stdin not a TTY, the installer falls back to the non-interactive path.
 - Run with `TERM=dumb` and `NO_COLOR=1`, which must not crash the TUI.
 
-### Phase 5: Test cross-platform behaviour (G11, G6)
-
-1. Add a `windows-latest` job (Git Bash) that runs
-   `test-convert-outputs.sh` with drift enforced. This proves the
-   platform-neutral manifest claim. Run `test-install.sh` there too, as an
-   advisory step.
-2. Run `localize-agents-zh.ps1` under `pwsh` on Ubuntu against a fixture
-   directory. Assert that `name` and `description` are replaced, files with no
-   entry stay byte-identical, and the output stays valid UTF-8.
-
-### Phase 6: Release smoke tests, manual or nightly (G10)
+### Phase 5: Release smoke tests, manual or nightly (G10)
 
 This phase is not a gate on every PR. Run it before a release, or nightly
 where the tool's CLI can run headless:
